@@ -126,6 +126,23 @@ local function parseMoney(value)
     if not value or value == "TBA" then
         return 0
     end
+    local cleaned = clean(value):gsub(",", "")
+    local number, suffix = cleaned:match("^%$?([%d%.]+)([MKBT]?)")
+    number = tonumber(number)
+    if not number then
+        return 0
+    end
+    if suffix == "B" then
+        return number * 1e9
+    elseif suffix == "M" then
+        return number * 1e6
+    elseif suffix == "K" then
+        return number * 1e3
+    elseif suffix == "T" then
+        return number * 1e12
+    end
+    return number
+end
 
 local function getAttrNumber(inst, keys)
     if not inst then
@@ -149,24 +166,6 @@ local function getAttrNumber(inst, keys)
     end
     return nil
 end
-    local cleaned = clean(value):gsub(",", "")
-    local number, suffix = cleaned:match("^%$?([%d%.]+)([MKBT]?)")
-    number = tonumber(number)
-    if not number then
-        return 0
-    end
-    if suffix == "B" then
-        return number * 1e9
-    elseif suffix == "M" then
-        return number * 1e6
-    elseif suffix == "K" then
-        return number * 1e3
-    elseif suffix == "T" then
-        return number * 1e12
-    end
-    return number
-end
-
 local function formatMoneyPerSec(value)
     if type(value) == "string" then
         return value
@@ -240,6 +239,89 @@ local function colorKeyFromColor3(color)
         math.floor(color.B * 255 + 0.5)
     )
 end
+
+local useItemRemote = nil
+local purchaseRemote = nil
+local sortRemote = nil
+local stealSuccessRemote = nil
+local quantumTeleportRemote = nil
+local sentryCooldownRemote = nil
+
+
+local function nameHasAll(name, parts)
+    for _, p in ipairs(parts) do
+        if not name:find(p, 1, true) then
+            return false
+        end
+    end
+    return true
+end
+
+local function findRemote(className, predicate)
+    local rs = Services.ReplicatedStorage
+    local roots = {
+        rs,
+        rs:FindFirstChild("Packages"),
+        rs:FindFirstChild("Net"),
+        rs:FindFirstChild("Remotes"),
+        rs:FindFirstChild("RemoteEvents"),
+        rs:FindFirstChild("RemoteFunctions"),
+    }
+    for _, root in ipairs(roots) do
+        if root and root.GetDescendants then
+            for _, inst in ipairs(root:GetDescendants()) do
+                if inst:IsA(className) and predicate(inst) then
+                    return inst
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function resolveRemotes()
+    if not (useItemRemote and useItemRemote.Parent) then
+        useItemRemote = findRemote("RemoteEvent", function(inst)
+            local n = inst.Name:lower()
+            return n == "useitem" or n == "use_item" or nameHasAll(n, { "use", "item" })
+        end)
+    end
+    if not (purchaseRemote and purchaseRemote.Parent) then
+        purchaseRemote = findRemote("RemoteFunction", function(inst)
+            local n = inst.Name:lower()
+            return n:find("purchase") or n:find("buy")
+        end)
+    end
+    if not (sortRemote and sortRemote.Parent) then
+        sortRemote = findRemote("RemoteEvent", function(inst)
+            local n = inst.Name:lower()
+            return n:find("sort") and (n:find("item") or n:find("inventory"))
+        end)
+    end
+    if not (stealSuccessRemote and stealSuccessRemote.Parent) then
+        stealSuccessRemote = findRemote("RemoteEvent", function(inst)
+            local n = inst.Name:lower()
+            return n:find("steal") and (n:find("success") or n:find("stolen"))
+        end)
+    end
+    if not (quantumTeleportRemote and quantumTeleportRemote.Parent) then
+        quantumTeleportRemote = findRemote("RemoteEvent", function(inst)
+            local n = inst.Name:lower()
+            return (n:find("quantum") and n:find("teleport")) or (n:find("cloner") and n:find("teleport"))
+        end)
+    end
+    if not (sentryCooldownRemote and sentryCooldownRemote.Parent) then
+        sentryCooldownRemote = findRemote("RemoteEvent", function(inst)
+            local n = inst.Name:lower()
+            return (n:find("sentry") or n:find("turret")) and n:find("cooldown")
+        end)
+    end
+end
+
+resolveRemotes()
+Services.ReplicatedStorage.DescendantAdded:Connect(function()
+    resolveRemotes()
+end)
 
 -- Plot/Base skin changer state
 local plotSkinOptions = { "Normal" }
@@ -842,8 +924,8 @@ local Aimbot = {
     touchMode = false,
 }
 
-local useItemRemote = nil
 local function getUseItemRemote()
+    resolveRemotes()
     if useItemRemote and typeof(useItemRemote.FireServer) == 'function' then
         return useItemRemote
     end
@@ -1196,6 +1278,7 @@ function Aimbot:watchContainer(container)
 end
 
 function Aimbot:start()
+    resolveRemotes()
     if self.enabled then
         return
     end
@@ -1267,7 +1350,6 @@ end
 
 
 -- Kick on steal
-local stealSuccessRemote = nil
 local autoKickOnStealEnabled = false
 local autoKickConn = nil
 local autoKickUiConn = nil
@@ -1367,6 +1449,7 @@ local function resolveStolenBrainrotName(...)
 end
 
 local function startAutoKickOnSteal()
+    resolveRemotes()
     if autoKickOnStealEnabled then
         return
     end
@@ -1432,7 +1515,6 @@ local SentryDestroyer = {
     processing = false,
 }
 
-local sentryCooldownRemote = nil
 
 local function isPlayerMatch(val)
     if val == nil then
@@ -1716,6 +1798,7 @@ local function scanAndDestroyTurrets()
 end
 
 function SentryDestroyer:start()
+    resolveRemotes()
     if self.enabled then
         return
     end
@@ -2033,9 +2116,9 @@ end
 
 
 -- Auto Cloner (manual trigger)
-local quantumTeleportRemote = nil
 
 local function getQuantumTeleportRemote()
+    resolveRemotes()
     if quantumTeleportRemote and typeof(quantumTeleportRemote.FireServer) == 'function' then
         return quantumTeleportRemote
     end
@@ -2886,10 +2969,9 @@ local shopItems = {
     "Attack Doge",
 }
 
-local purchaseRemote = nil
-local sortRemote = nil
 
 local function purchaseItem(selectedItem)
+    resolveRemotes()
     if not selectedItem or selectedItem == "" then
         return
     end
